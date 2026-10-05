@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Baby name ranker</title>
+<style>
+  :root {
+    --bg: #f7f3ee;
+    --card: #ffffff;
+    --ink: #2c2724;
+    --muted: #8a8078;
+    --line: #e9e0d5;
+    --accent: #b4552d;
+    --accent-soft: #f6ece2;
+    --accent-line: #ecd9c6;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { color-scheme: light; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 3rem; }
+  header h1 { font-size: 1.35rem; margin: 0.4rem 0 0.1rem; }
+  .who { color: var(--muted); font-size: 0.85rem; }
+  .who b { color: var(--ink); font-weight: 600; }
+
+  .tabs { display: flex; gap: 0.4rem; margin: 1rem 0; }
+  .tab {
+    flex: 1; padding: 0.55rem 0.4rem; font-size: 0.92rem;
+    border: 1px solid var(--line); border-radius: 0.7rem;
+    background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pill {
+    display: inline-block; min-width: 1.4em; padding: 0 0.35em;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+  }
+  .tab.active .pill { background: rgba(255,255,255,0.25); color: #fff; }
+
+  section[hidden] { display: none; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 1rem; padding: 1rem; margin-bottom: 0.8rem;
+    box-shadow: 0 1px 2px rgba(44, 39, 36, 0.04);
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.6rem; }
+  .hint { color: var(--muted); font-size: 0.8rem; margin: 0.4rem 0; }
+  .hint.center { text-align: center; }
+
+  textarea, input[type="text"] {
+    width: 100%; padding: 0.6rem 0.7rem; font-size: 1rem; font-family: inherit;
+    color: var(--ink); background: #fff;
+    border: 1px solid var(--line); border-radius: 0.6rem;
+  }
+  textarea { resize: vertical; min-height: 4.5rem; }
+  textarea:focus, input:focus, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+
+  .btn {
+    display: inline-block; padding: 0.6rem 1.1rem; font-size: 0.95rem;
+    border: none; border-radius: 0.6rem; cursor: pointer;
+    background: var(--accent); color: #fff; font-weight: 600;
+  }
+  .btn.secondary {
+    background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500;
+  }
+  .btn.block { width: 100%; margin-top: 0.6rem; }
+  .link {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--accent); font-size: 0.85rem; text-decoration: underline;
+  }
+  .link.danger { color: #a33; }
+
+  ul.list { list-style: none; margin: 0.6rem 0 0; padding: 0; }
+  ul.list li {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 0.1rem; border-bottom: 1px dashed var(--line);
+  }
+  ul.list li:last-child { border-bottom: none; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-name { font-size: 1.05rem; overflow-wrap: anywhere; }
+  .row-meta { color: var(--muted); font-size: 0.78rem; }
+  .empty { color: var(--muted); font-size: 0.9rem; padding: 0.6rem 0; }
+
+  .mv {
+    width: 2.4rem; height: 2.4rem; flex: none;
+    border: 1px solid var(--line); border-radius: 0.55rem;
+    background: #fff; color: var(--ink); font-size: 1rem; line-height: 1; cursor: pointer;
+  }
+  .mv:disabled { opacity: 0.3; cursor: default; }
+  .rm {
+    width: 1.8rem; height: 1.8rem; flex: none;
+    border: none; background: none; color: var(--muted);
+    font-size: 1.1rem; line-height: 1; cursor: pointer;
+  }
+  .rm:hover { color: #a33; }
+  .pos {
+    flex: none; min-width: 2rem; text-align: center;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 0.5rem; font-size: 0.85rem; font-weight: 600; padding: 0.15rem 0.2rem;
+  }
+  li.dragging { opacity: 0.4; }
+  li.drag-over { border-top: 2px solid var(--accent); }
+
+  .winner {
+    background: var(--accent-soft); border: 1px solid var(--accent-line);
+    border-radius: 1rem; padding: 1rem; margin-bottom: 0.8rem;
+    font-size: 1.05rem;
+  }
+  .winner .big {
+    display: block; font-size: 1.5rem; font-weight: 700; color: var(--accent);
+    margin-top: 0.15rem; overflow-wrap: anywhere;
+  }
+  .ranks { color: var(--muted); font-size: 0.8rem; margin-top: 0.1rem; }
+  .score { flex: none; text-align: right; font-size: 0.85rem; color: var(--muted); }
+  .score b { color: var(--ink); font-size: 1rem; }
+
+  footer { margin-top: 1.4rem; text-align: center; }
+  footer .btn { margin: 0 0.25rem 0.5rem; }
+  footer .fine { margin-top: 0.6rem; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%) translateY(1rem);
+    background: var(--ink); color: #fff; padding: 0.6rem 1rem; border-radius: 0.7rem;
+    font-size: 0.9rem; max-width: 90vw; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>Baby name ranker</h1>
+    <div class="who">Ranking as <b id="whoName"></b> <button id="editWho" class="link">change</button></div>
+  </header>
+
+  <section id="setup" class="card" hidden>
+    <h2>Who are you?</h2>
+    <p class="hint">Enter your name once. Everyone should use the same name on every device.</p>
+    <input type="text" id="setupName" placeholder="Your name" maxlength="30" autocomplete="off">
+    <button id="setupGo" class="btn block">Start</button>
+  </section>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab" data-tab="names">Names <span class="pill" id="namesPill">0</span></button>
+    <button class="tab" data-tab="rank">My ranking</button>
+    <button class="tab" data-tab="results">Results</button>
+  </nav>
+
+  <section id="tab-names" hidden>
+    <div class="card">
+      <h2>Add names</h2>
+      <p class="hint">One name per line, or comma separated. Duplicates are skipped.</p>
+      <textarea id="newNames" placeholder="Alma&#10;Kasper" maxlength="2000"></textarea>
+      <button id="addNames" class="btn block">Add to the list</button>
+    </div>
+    <div class="card">
+      <h2>All suggestions</h2>
+      <ul class="list" id="nameList"></ul>
+    </div>
+  </section>
+
+  <section id="tab-rank" hidden>
+    <div class="card">
+      <h2>Put the names in order</h2>
+      <p class="hint" id="rankHint"></p>
+      <ul class="list" id="rankList"></ul>
+      <button id="lockBtn" class="btn block">Use this order as my ranking</button>
+    </div>
+  </section>
+
+  <section id="tab-results" hidden>
+    <div id="resultBody"></div>
+  </section>
+
+  <footer>
+    <button id="shareBtn" class="btn">Copy share link</button>
+    <button id="shareSheet" class="btn secondary" hidden>Share</button>
+    <button id="resetBtn" class="link danger">Start over</button>
+    <p class="hint fine">
+      The share link carries the names and the rankings. Send it to each other in chat
+      after every change. Nothing is stored on any server.
+    </p>
+  </footer>
+</main>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ---------- state ---------- */
+
+var LS_STATE = 'bn.state.v1';
+var LS_ME = 'bn.me.v1';
+
+function emptyState() { return { v: 1, names: [], ballots: {} }; }
+
+function loadState() {
+  try {
+    var s = JSON.parse(localStorage.getItem(LS_STATE));
+    if (s && Array.isArray(s.names) && s.ballots && typeof s.ballots === 'object') return s;
+  } catch (e) {}
+  return emptyState();
+}
+
+function loadMe() {
+  try { return localStorage.getItem(LS_ME) || ''; } catch (e) { return ''; }
+}
+
+var state = loadState();
+var me = loadMe();
+
+function save() {
+  try { localStorage.setItem(LS_STATE, JSON.stringify(state)); } catch (e) {}
+}
+
+function key(n) { return String(n).trim().toLowerCase(); }
+
+/* Merge shared state into local state. Names union (first suggester wins),
+   ballots keep the newest version per person. Returns {state, newNames}. */
+function merge(a, b) {
+  var out = emptyState();
+  var seen = {};
+  var order = [a, b];
+  for (var k = 0; k < order.length; k++) {
+    var src = order[k];
+    if (!src || !Array.isArray(src.names)) continue;
+    for (var i = 0; i < src.names.length; i++) {
+      var it = src.names[i];
+      if (!it || typeof it.n !== 'string') continue;
+      var nm = it.n.trim();
+      if (!nm) continue;
+      var id = key(nm);
+      if (seen[id]) continue;
+      seen[id] = true;
+      out.names.push({ n: nm, by: it.by || '', at: it.at || 0 });
+    }
+  }
+  var bs = [a && a.ballots || {}, b && b.ballots || {}];
+  for (var j = 0; j < bs.length; j++) {
+    for (var voter in bs[j]) {
+      var bal = bs[j][voter];
+      if (!bal || !Array.isArray(bal.order)) continue;
+      var prev = out.ballots[voter];
+      if (!prev || (bal.at || 0) > (prev.at || 0)) {
+        out.ballots[voter] = { at: bal.at || 0, order: bal.order.slice() };
+      }
+    }
+  }
+  var known = {};
+  for (var m = 0; m < out.names.length; m++) known[key(out.names[m].n)] = true;
+  for (var v in out.ballots) {
+    out.ballots[v].order = out.ballots[v].order.filter(function (n) {
+      return typeof n === 'string' && known[key(n)];
+    });
+  }
+  var before = {};
+  for (var q = 0; q < a.names.length; q++) before[key(a.names[q].n)] = true;
+  var newNames = out.names.filter(function (x) { return !before[key(x.n)]; }).length;
+  return { state: out, newNames: newNames };
+}
+
+function votersOf(st) {
+  var out = [];
+  var seen = {};
+  function add(v) {
+    if (!v) return;
+    if (seen[v]) return;
+    seen[v] = true;
+    out.push(v);
+  }
+  for (var i = 0; i < st.names.length; i++) add(st.names[i].by);
+  for (var k in st.ballots) add(k);
+  return out;
+}
+
+/* Borda count: a name ranked at 0-based position i in a ballot of N names
+   gets N - i points. Also tracks first places and average rank. */
+function tally(st) {
+  var N = st.names.length;
+  var rows = st.names.map(function (x) {
+    return { name: x.n, by: x.by, score: 0, sumPos: 0, cnt: 0, firsts: 0, ranks: {} };
+  });
+  var byKey = {};
+  rows.forEach(function (r) { byKey[key(r.name)] = r; });
+  for (var voter in st.ballots) {
+    var order = st.ballots[voter].order;
+    for (var i = 0; i < order.length; i++) {
+      var r = byKey[key(order[i])];
+      if (!r) continue;
+      r.ranks[voter] = i + 1;
+      if (i === 0) r.firsts++;
+      r.score += N - i;
+      r.sumPos += i + 1;
+      r.cnt++;
+    }
+  }
+  rows.forEach(function (r) { r.avg = r.cnt ? r.sumPos / r.cnt : null; });
+  rows.sort(function (a, b) {
+    return (b.score - a.score) || (b.firsts - a.firsts) ||
+      ((a.avg === null ? 99 : a.avg) - (b.avg === null ? 99 : b.avg)) ||
+      a.name.localeCompare(b.name);
+  });
+  return rows;
+}
+
+/* Everyone who ever suggested or ranked must hold a ballot covering all names. */
+function readyCheck(st) {
+  var missing = [];
+  if (!st.names.length) return { ready: false, missing: [] };
+  var voters = votersOf(st);
+  for (var i = 0; i < voters.length; i++) {
+    var v = voters[i];
+    var b = st.ballots[v];
+    if (!b) { missing.push(v + ' has not ranked yet'); continue; }
+    var have = {};
+    b.order.forEach(function (n) { have[key(n)] = true; });
+    var stale = st.names.some(function (x) { return !have[key(x.n)]; });
+    if (stale) missing.push(v + ' must place the new names');
+  }
+  return { ready: missing.length === 0, missing: missing };
+}
+
+/* True when my ballot is missing or does not cover every name yet. */
+function needsSubmit() {
+  var b = state.ballots[me];
+  if (!b) return true;
+  var have = {};
+  b.order.forEach(function (n) { have[key(n)] = true; });
+  return state.names.some(function (x) { return !have[key(x.n)]; });
+}
+
+/* My saved order, with any names I have not placed yet appended. */
+function myOrder() {
+  var b = state.ballots[me];
+  var out = [];
+  var have = {};
+  if (b) {
+    for (var i = 0; i < b.order.length; i++) {
+      var id = key(b.order[i]);
+      var full = findName(b.order[i]);
+      if (!full || have[id]) continue;
+      have[id] = true;
+      out.push(full);
+    }
+  }
+  for (var j = 0; j < state.names.length; j++) {
+    var id2 = key(state.names[j].n);
+    if (!have[id2]) {
+      have[id2] = true;
+      out.push(state.names[j].n);
+    }
+  }
+  return out;
+}
+
+function findName(n) {
+  var id = key(n);
+  for (var i = 0; i < state.names.length; i++) {
+    if (key(state.names[i].n) === id) return state.names[i].n;
+  }
+  return null;
+}
+
+function saveBallot(order) {
+  state.ballots[me] = { at: Date.now(), order: order.slice() };
+  save();
+}
+
+/* ---------- share links ---------- */
+
+function enc(st) {
+  var bytes = new TextEncoder().encode(JSON.stringify(st));
+  var bin = '';
+  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function dec(s) {
+  var b = s.replace(/-/g, '+').replace(/_/g, '/');
+  b += '='.repeat((4 - (b.length % 4)) % 4);
+  var bin = atob(b);
+  var bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function shareUrl() {
+  return location.href.split('#')[0] + '#s=' + enc(state);
+}
+
+/* ---------- ui ---------- */
+
+var $ = function (id) { return document.getElementById(id); };
+var currentTab = 'names';
+var toastTimer = null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function toast(msg) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2600);
+}
+
+function render() {
+  $('whoName').textContent = me || '—';
+  $('namesPill').textContent = state.names.length;
+
+  var hasMe = !!me;
+  $('setup').hidden = hasMe;
+  $('tabs').hidden = !hasMe;
+  ['names', 'rank', 'results'].forEach(function (t) {
+    $('tab-' + t).hidden = !hasMe || currentTab !== t;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (btn) {
+    btn.classList.toggle('active', btn.dataset.tab === currentTab);
+  });
+  if (!hasMe) return;
+
+  renderNames();
+  renderRank();
+  renderResults();
+}
+
+function renderNames() {
+  var ul = $('nameList');
+  if (!state.names.length) {
+    ul.innerHTML = '<li class="empty">No names yet. Add yours above, then send the share link.</li>';
+    return;
+  }
+  ul.innerHTML = state.names.map(function (x) {
+    return '<li><div class="row-main"><div class="row-name">' + esc(x.n) + '</div>' +
+      (x.by ? '<div class="row-meta">added by ' + esc(x.by) + '</div>' : '') +
+      '</div><button class="rm" data-rm="' + esc(x.n) + '" title="Remove" aria-label="Remove ' +
+      esc(x.n) + '">&times;</button></li>';
+  }).join('');
+}
+
+function renderRank() {
+  var order = myOrder();
+  var ul = $('rankList');
+  if (!order.length) {
+    ul.innerHTML = '<li class="empty">Nothing to rank yet. Add names first.</li>';
+    $('rankHint').textContent = '';
+    $('lockBtn').hidden = true;
+    return;
+  }
+  var b = state.ballots[me];
+  var placed = {};
+  if (b) b.order.forEach(function (n) { placed[key(n)] = true; });
+  var unplaced = order.filter(function (n) { return !placed[key(n)]; }).length;
+  $('rankHint').textContent = unplaced
+    ? unplaced + ' name' + (unplaced === 1 ? '' : 's') + ' still without a place. Top of the list is your favourite.'
+    : 'Top of the list is your favourite. Your ranking is saved on this device.';
+  $('lockBtn').hidden = !needsSubmit();
+  ul.innerHTML = order.map(function (n, i) {
+    var meta = 'added by ' + esc(findMeta(n));
+    return '<li draggable="true" data-i="' + i + '">' +
+      '<span class="pos">' + (i + 1) + '</span>' +
+      '<div class="row-main"><div class="row-name">' + esc(n) + '</div>' +
+      (findMeta(n) ? '<div class="row-meta">' + meta + '</div>' : '') + '</div>' +
+      '<button class="mv" data-mv="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') +
+      ' aria-label="Move ' + esc(n) + ' up">&#8593;</button>' +
+      '<button class="mv" data-mv="down" data-i="' + i + '"' + (i === order.length - 1 ? ' disabled' : '') +
+      ' aria-label="Move ' + esc(n) + ' down">&#8595;</button></li>';
+  }).join('');
+  bindDrag();
+}
+
+function findMeta(n) {
+  for (var i = 0; i < state.names.length; i++) {
+    if (key(state.names[i].n) === key(n)) return state.names[i].by || '';
+  }
+  return '';
+}
+
+function renderResults() {
+  var body = $('resultBody');
+  var names = state.names.map(function (x) { return x.n; });
+  if (!names.length) {
+    body.innerHTML = '<div class="card"><p class="empty">No names yet.</p></div>';
+    return;
+  }
+  var check = readyCheck(state);
+  if (!check.ready) {
+    body.innerHTML = '<div class="card"><h2>Results unlock when everyone has ranked</h2>' +
+      '<p class="hint">All ' + names.length + ' names need a ranking from each person. Then the combined result appears here.</p>' +
+      (check.missing.length
+        ? '<ul class="list">' + check.missing.map(function (m) {
+            return '<li><div class="row-main"><div class="row-name">' + esc(m) + '</div></div></li>';
+          }).join('') + '</ul>'
+        : '') + '</div>';
+    return;
+  }
+  var rows = tally(state);
+  var top = rows[0];
+  var ties = rows.filter(function (r) { return r.score === top.score; });
+  var head = '<span class="big">' +
+    (ties.length > 1
+      ? ties.map(function (r) { return esc(r.name); }).join(', ')
+      : esc(top.name)) + '</span>';
+  var voters = votersOf(state);
+  body.innerHTML = '<div class="winner">' +
+    (ties.length > 1 ? 'Joint top picks' : 'Top pick') + head + '</div>' +
+    '<div class="card"><h2>The full picture</h2><ul class="list">' +
+    rows.map(function (r) {
+      var place = rows.filter(function (x) { return x.score > r.score; }).length + 1;
+      return '<li><div class="row-main"><div class="row-name">' + place + '. ' + esc(r.name) +
+        (r.by ? ' <span class="row-meta">(' + esc(r.by) + ')</span>' : '') + '</div>' +
+        '<div class="ranks">' + voters.map(function (v) {
+          return esc(v) + (r.ranks[v] ? ' #' + r.ranks[v] : ' —');
+        }).join(' · ') + '</div></div>' +
+        '<div class="score"><b>' + r.score + '</b> pts<br>avg ' + (r.avg === null ? '—' : r.avg.toFixed(1)) + '</div></li>';
+    }).join('') + '</ul>' +
+    '<p class="hint">Points: a first place gives ' + names.length + ' points, last place 1 point. ' +
+    'This is a Borda count over both rankings.</p></div>';
+}
+
+/* ---------- actions ---------- */
+
+function addNames() {
+  var raw = $('newNames').value.split(/[\n,;]+/);
+  var added = 0, skipped = 0;
+  var existing = {};
+  state.names.forEach(function (x) { existing[key(x.n)] = true; });
+  for (var i = 0; i < raw.length; i++) {
+    var nm = raw[i].trim().replace(/\s+/g, ' ');
+    if (!nm) continue;
+    if (nm.length > 40) nm = nm.slice(0, 40);
+    var id = key(nm);
+    if (existing[id]) { skipped++; continue; }
+    existing[id] = true;
+    state.names.push({ n: nm, by: me, at: Date.now() });
+    added++;
+  }
+  if (!added) {
+    toast(skipped ? 'Already on the list' : 'Type at least one name');
+    return;
+  }
+  $('newNames').value = '';
+  save();
+  render();
+  toast(skipped ? added + ' added, ' + skipped + ' duplicate' + (skipped === 1 ? '' : 's') + ' skipped'
+                : added + ' name' + (added === 1 ? '' : 's') + ' added. Copy the share link to send them on.');
+}
+
+function removeName(n) {
+  var id = key(n);
+  state.names = state.names.filter(function (x) { return key(x.n) !== id; });
+  for (var v in state.ballots) {
+    state.ballots[v].order = state.ballots[v].order.filter(function (x) { return key(x) !== id; });
+  }
+  save();
+  render();
+  toast('Removed');
+}
+
+function move(i, dir) {
+  var order = myOrder();
+  var j = i + dir;
+  if (j < 0 || j >= order.length) return;
+  var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+  saveBallot(order);
+  render();
+}
+
+function reorder(from, to) {
+  var order = myOrder();
+  if (from === to || from < 0 || to < 0) return;
+  var moved = order.splice(from, 1)[0];
+  order.splice(to, 0, moved);
+  saveBallot(order);
+  render();
+}
+
+function bindDrag() {
+  var ul = $('rankList');
+  var dragI = null;
+  Array.prototype.forEach.call(ul.querySelectorAll('li[draggable]'), function (li) {
+    li.addEventListener('dragstart', function (e) {
+      dragI = Number(li.dataset.i);
+      li.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(dragI)); } catch (x) {} }
+    });
+    li.addEventListener('dragend', function () {
+      dragI = null;
+      li.classList.remove('dragging');
+      Array.prototype.forEach.call(ul.querySelectorAll('li'), function (x) { x.classList.remove('drag-over'); });
+    });
+    li.addEventListener('dragover', function (e) {
+      if (dragI === null) return;
+      e.preventDefault();
+      li.classList.add('drag-over');
+    });
+    li.addEventListener('dragleave', function () { li.classList.remove('drag-over'); });
+    li.addEventListener('drop', function (e) {
+      e.preventDefault();
+      li.classList.remove('drag-over');
+      if (dragI === null) return;
+      reorder(dragI, Number(li.dataset.i));
+      dragI = null;
+    });
+  });
+}
+
+function copyLink() {
+  var url = shareUrl();
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    if (ok) toast('Share link copied');
+    else window.prompt('Copy this link:', url);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(function () { toast('Share link copied'); }, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function setTab(t) {
+  currentTab = t;
+  render();
+  window.scrollTo(0, 0);
+}
+
+/* ---------- events ---------- */
+
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (t.classList.contains('tab')) { setTab(t.dataset.tab); return; }
+  if (t.id === 'addNames') { addNames(); return; }
+  if (t.id === 'lockBtn') {
+    saveBallot(myOrder());
+    render();
+    toast('Ranking saved. Copy the share link to send it on.');
+    return;
+  }
+  if (t.id === 'shareBtn') { copyLink(); return; }
+  if (t.id === 'shareSheet') {
+    navigator.share({ title: 'Baby name ranker', url: shareUrl() }).catch(function () {});
+    return;
+  }
+  if (t.id === 'editWho') {
+    var n = window.prompt('Your name:', me);
+    if (n && n.trim()) {
+      me = n.trim().replace(/\s+/g, ' ').slice(0, 30);
+      try { localStorage.setItem(LS_ME, me); } catch (x) {}
+      render();
+    }
+    return;
+  }
+  if (t.id === 'resetBtn') {
+    if (window.confirm('Clear everything on this device? Share links already sent keep working.')) {
+      state = emptyState();
+      me = '';
+      try { localStorage.removeItem(LS_STATE); localStorage.removeItem(LS_ME); } catch (x) {}
+      currentTab = 'names';
+      render();
+    }
+    return;
+  }
+  if (t.id === 'setupGo') {
+    var s = $('setupName').value.trim().replace(/\s+/g, ' ').slice(0, 30);
+    if (!s) { toast('Please enter your name'); return; }
+    me = s;
+    try { localStorage.setItem(LS_ME, me); } catch (x) {}
+    render();
+    return;
+  }
+  if (t.dataset && t.dataset.rm) {
+    if (window.confirm('Remove “' + t.dataset.rm + '”?')) removeName(t.dataset.rm);
+    return;
+  }
+  if (t.dataset && t.dataset.mv) {
+    move(Number(t.dataset.i), t.dataset.mv === 'up' ? -1 : 1);
+    return;
+  }
+});
+
+$('newNames').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addNames(); }
+});
+
+/* ---------- boot ---------- */
+
+(function boot() {
+  if (location.hash.indexOf('#s=') === 0) {
+    try {
+      var incoming = dec(location.hash.slice(3));
+      var before = state;
+      var res = merge(before, incoming);
+      state = res.state;
+      save();
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+      toast(res.newNames
+        ? 'Shared list merged: ' + res.newNames + ' new name' + (res.newNames === 1 ? '' : 's')
+        : 'Shared list merged');
+    } catch (e) {
+      toast('That share link did not work');
+    }
+  }
+  if (navigator.share) $('shareSheet').hidden = false;
+  render();
+})();
+
+/* exposed for smoke tests */
+window.BN = { merge: merge, tally: tally, votersOf: votersOf, readyCheck: readyCheck, enc: enc, dec: dec };
+</script>
+</body>
+</html>
