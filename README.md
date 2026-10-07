@@ -8,10 +8,10 @@ showing the combined result.
 1. Each person enters a name and adds suggestions on the Names tab.
 2. Copy the share link and send it to the other person in chat.
 3. On the My ranking tab, each person ranks all names with quick duels: the
-   site shows two names at a time and you tap the one you prefer. Every pair
-   of names meets exactly once in random order, no name repeats in two
-   consecutive questions, and the run stops early once the answers imply the
-   full ranking. The arrows allow small nudges afterwards.
+   site shows two names at a time and you tap the one you prefer. Elo ratings
+   run in the background and matchmaking serves the closest duel each time.
+   No name repeats in two consecutive questions, and the run stops once the
+   answers imply the full ranking. The arrows allow small nudges afterwards.
 4. The Results tab unlocks when everyone has ranked every name. It shows the
    combined order (Borda count: first place gives N points, last place 1 point),
    the average rank, and each person's ranks.

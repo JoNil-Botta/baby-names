@@ -113,8 +113,8 @@ const staleCheck = BN.readyCheck(stale);
 assert.strictEqual(staleCheck.ready, false, 'not ready with a new unplaced name');
 assert(/new names/.test(staleCheck.missing.join(' ')), 'stale ballots reported');
 
-/* duel cup: random fresh pairs, no repeats between consecutive questions,
-   exact result with early finish */
+/* Elo duels: exact result, closest-matchup matchmaking, no repeats between
+   consecutive questions unless mathematically forced */
 function runDuel(names, truth) {
   const s = BN.newDuelSession(names);
   const seen = [];
@@ -122,6 +122,14 @@ function runDuel(names, truth) {
   while (!BN.duelComplete(s)) {
     const pair = BN.duelPair(s);
     seen.push([pair.a, pair.b]);
+    if (seen.length > 1) {
+      const prev = seen[seen.length - 2];
+      const overlaps = (p) => p[0] === prev[0] || p[0] === prev[1] || p[1] === prev[0] || p[1] === prev[1];
+      if (overlaps([pair.a, pair.b])) {
+        const freshExisted = s.queue.some((p) => !overlaps(p));
+        assert(!freshExisted, 'a repeat is only allowed when no fresh pair exists');
+      }
+    }
     const winner = truth.indexOf(pair.a) < truth.indexOf(pair.b) ? pair.a : pair.b;
     BN.duelAnswer(s, winner);
     assert(++guard < 500, 'duel run must terminate');
@@ -135,20 +143,23 @@ for (let trial = 0; trial < 20; trial++) {
     const truth = names.slice().sort(() => Math.random() - 0.5);
     const { s, seen } = runDuel(names, truth);
     assert.deepStrictEqual(BN.duelOrder(s, names), truth,
-      'cup reproduces the true order (n=' + n + ')');
+      'run reproduces the true order (n=' + n + ')');
     assert(seen.length <= BN.duelTotal(n), 'never asks more than the full pair count');
-    if (n >= 6) {
-      for (let i = 1; i < seen.length; i++) {
-        const [a0, a1] = seen[i - 1], [b0, b1] = seen[i];
-        assert(b0 !== a0 && b0 !== a1 && b1 !== a0 && b1 !== a1,
-          'no name repeats in consecutive questions (n=' + n + ')');
-      }
-    }
   }
 }
 
 assert.strictEqual(BN.duelTotal(1), 0, 'a single name needs no duels');
 assert.strictEqual(BN.duelTotal(4), 6, 'four names meet in six duels');
+
+/* Elo bookkeeping: winner gains, loser drops */
+{
+  const s = BN.newDuelSession(['A', 'B']);
+  const pair = BN.duelPair(s);
+  const before = JSON.parse(JSON.stringify(s.ratings));
+  BN.duelAnswer(s, pair.a);
+  assert(s.ratings[pair.a] > before[pair.a], 'winner gains Elo');
+  assert(s.ratings[pair.b] < before[pair.b], 'loser drops Elo');
+}
 
 /* forced-balance answers (can cycle) still finish with a full ranking */
 {
@@ -167,7 +178,7 @@ assert.strictEqual(BN.duelTotal(4), 6, 'four names meet in six duels');
 
 /* duel undo restores the previous step */
 const s2 = BN.newDuelSession(['A', 'B', 'C', 'D']);
-const snap = () => JSON.stringify([s2.queue, s2.asked, s2.wins, s2.reach, s2.done]);
+const snap = () => JSON.stringify([s2.queue, s2.asked, s2.wins, s2.reach, s2.ratings, s2.lastShown, s2.done]);
 const before = snap();
 const firstPair = BN.duelPair(s2);
 BN.duelAnswer(s2, firstPair.a);

@@ -428,17 +428,18 @@ function shareUrl() {
   return location.href.split('#')[0] + '#s=' + enc(state);
 }
 
-/* ---------- duel ranking ----------
-   "Name cup": every pair of names meets exactly once, drawn in random order
-   inside rounds of disjoint pairings, so the same name never shows up in two
-   consecutive questions (for 6 or more names). The run finishes early as
-   soon as the answered pairs imply a unique total order. Session survives
-   reloads. */
+/* ---------- duel ranking (Elo) ----------
+   Elo ratings (start 1000, K=32) run in the background and drive the
+   matchmaking: every question is the closest-rated pair available, never
+   repeating a name from the previous question when a fresh pair exists.
+   Each pair is asked at most once. The run finishes early as soon as the
+   answered pairs imply a unique total order; ratings break ties when they
+   do not. Session survives reloads. */
 
 function loadDuel() {
   try {
     var s = JSON.parse(localStorage.getItem(LS_DUEL));
-    if (s && Array.isArray(s.queue) && Array.isArray(s.asked) &&
+    if (s && Array.isArray(s.queue) && Array.isArray(s.asked) && s.ratings &&
         s.queue.every(function (p) { return Array.isArray(p); })) return s;
   } catch (e) {}
   return null;
@@ -462,40 +463,15 @@ function fy(a) {
 }
 
 function newDuelSession(names) {
-  var q = fy(names.slice());
-  var m = q.length + (q.length % 2);
-  var arr = q.slice();
-  if (arr.length < m) arr.push(null);              // bye when the count is odd
-  var rot = arr.slice(1);
-  var rounds = [];
-  for (var r = 0; r < m - 1; r++) {
-    var pairs = [];
-    if (arr[0] !== null && rot[0] !== null) pairs.push([arr[0], rot[0]]);
-    for (var i = 1; i <= (m - 2) / 2; i++) {
-      var a1 = rot[i], b1 = rot[m - 1 - i];
-      if (a1 !== null && b1 !== null) pairs.push([a1, b1]);
-    }
-    rounds.push(fy(pairs));
-    rot.unshift(rot.pop());
+  var pool = [];
+  for (var i = 0; i < names.length; i++) {
+    for (var j = i + 1; j < names.length; j++) pool.push([names[i], names[j]]);
   }
-  var queue = [];
-  var last = null;
-  rounds.forEach(function (pairs) {
-    if (last && pairs.length > 1) {
-      for (var i = 0; i < pairs.length; i++) {
-        var p = pairs[i];
-        if (p[0] !== last[0] && p[0] !== last[1] && p[1] !== last[0] && p[1] !== last[1]) {
-          pairs.splice(i, 1);
-          pairs.unshift(p);
-          break;
-        }
-      }
-    }
-    pairs.forEach(function (p) { queue.push(p); });
-    if (pairs.length) last = pairs[pairs.length - 1];
-  });
-  var s = { queue: queue, asked: [], wins: {}, reach: {}, done: 0, total: queue.length, history: [] };
-  names.forEach(function (n) { s.wins[n] = 0; s.reach[n] = {}; });
+  var s = {
+    queue: fy(pool), asked: [], wins: {}, reach: {}, ratings: {}, lastShown: null,
+    done: 0, total: pool.length, history: []
+  };
+  names.forEach(function (n) { s.wins[n] = 0; s.reach[n] = {}; s.ratings[n] = 1000; });
   return s;
 }
 
@@ -514,9 +490,28 @@ function addWin(s, winner, loser) {
   });
 }
 
-/* The next question is simply the next pair in the scheduled queue. */
+/* Elo matchmaking: the closest-rated pair available, preferring pairs with no
+   name from the previous question. Ties follow the (shuffled) queue order.
+   The chosen pair moves to the front of the queue. */
 function currentDuel(s) {
-  return s.queue.length ? s.queue[0] : null;
+  if (!s.queue.length) return null;
+  var cand = s.queue;
+  if (s.lastShown) {
+    var fresh = s.queue.filter(function (p) {
+      return p[0] !== s.lastShown[0] && p[0] !== s.lastShown[1] &&
+        p[1] !== s.lastShown[0] && p[1] !== s.lastShown[1];
+    });
+    if (fresh.length) cand = fresh;
+  }
+  var chosen = cand[0];
+  var bestD = Math.abs(s.ratings[chosen[0]] - s.ratings[chosen[1]]);
+  for (var i = 1; i < cand.length; i++) {
+    var d = Math.abs(s.ratings[cand[i][0]] - s.ratings[cand[i][1]]);
+    if (d < bestD) { bestD = d; chosen = cand[i]; }
+  }
+  var idx = s.queue.indexOf(chosen);
+  if (idx > 0) { s.queue.splice(idx, 1); s.queue.unshift(chosen); }
+  return chosen;
 }
 
 /* True when the answered pairs imply one strict total order. */
@@ -543,12 +538,16 @@ function duelAnswer(s, winner) {
   if (!cur) return true;
   s.history.push(JSON.parse(JSON.stringify({
     queue: s.queue, asked: s.asked, wins: s.wins, reach: s.reach,
-    done: s.done, total: s.total
+    ratings: s.ratings, lastShown: s.lastShown, done: s.done, total: s.total
   })));
   if (s.history.length > 80) s.history.shift();
   var loser = winner === cur[0] ? cur[1] : cur[0];
   s.queue.shift();
   addWin(s, winner, loser);
+  var exp = 1 / (1 + Math.pow(10, (s.ratings[loser] - s.ratings[winner]) / 400));
+  s.ratings[winner] += 32 * (1 - exp);
+  s.ratings[loser] -= 32 * (1 - exp);
+  s.lastShown = cur;
   s.done++;
   return duelComplete(s);
 }
@@ -559,12 +558,13 @@ function duelUndo(s) {
   if (!s.history.length) return false;
   var h = s.history.pop();
   s.queue = h.queue; s.asked = h.asked; s.wins = h.wins; s.reach = h.reach;
+  s.ratings = h.ratings; s.lastShown = h.lastShown;
   s.done = h.done; s.total = h.total;
   return true;
 }
 
 /* Final ranking: implied dominance when the answers imply a total order,
-   otherwise match wins, then the head-to-head result, then name order. */
+   otherwise Elo rating, match wins, head-to-head, then name order. */
 function duelOrder(s, names) {
   function reachCount(n) {
     var c = 0;
@@ -580,6 +580,7 @@ function duelOrder(s, names) {
   }
   return names.slice().sort(function (a, b) {
     return (reachCount(b) - reachCount(a)) ||
+      ((s.ratings[b] || 0) - (s.ratings[a] || 0)) ||
       ((s.wins[b] || 0) - (s.wins[a] || 0)) || h2h(a, b) || a.localeCompare(b);
   });
 }
@@ -656,9 +657,9 @@ function renderRank() {
     } else {
       $('startDuels').disabled = false;
       $('startHint').textContent = 'Two names at a time — tap the one you prefer. ' +
-        'Every pair of names meets exactly once in random order, and no name ' +
-        'shows up in two questions in a row. The run stops early as soon as the ' +
-        'ranking is known. Each run ranks all names from scratch.';
+        'Elo ratings run in the background and matchmaking serves the closest ' +
+        'duel each time. No name shows up in two questions in a row. The run ' +
+        'stops as soon as the ranking is known. Each run ranks all names from scratch.';
     }
   }
   if (showArena) renderDuel();
@@ -680,7 +681,7 @@ function renderDuel() {
   $('duelA').dataset.name = pair.a;
   $('duelB').textContent = pair.b;
   $('duelB').dataset.name = pair.b;
-  $('duelStatus').textContent = 'Each pair of names meets once. Fresh pair every question.';
+  $('duelStatus').textContent = 'Matchmaking serves the closest duel. Never the same name twice in a row.';
   $('duelUndo').disabled = !duel.history.length;
 }
 
