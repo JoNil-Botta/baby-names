@@ -113,31 +113,64 @@ const staleCheck = BN.readyCheck(stale);
 assert.strictEqual(staleCheck.ready, false, 'not ready with a new unplaced name');
 assert(/new names/.test(staleCheck.missing.join(' ')), 'stale ballots reported');
 
-/* duel engine: 20 random runs against hidden true orders must reproduce them */
+/* duel cup: random fresh pairs, no repeats between consecutive questions,
+   exact result with early finish */
+function runDuel(names, truth) {
+  const s = BN.newDuelSession(names);
+  const seen = [];
+  let guard = 0;
+  while (!BN.duelComplete(s)) {
+    const pair = BN.duelPair(s);
+    seen.push([pair.a, pair.b]);
+    const winner = truth.indexOf(pair.a) < truth.indexOf(pair.b) ? pair.a : pair.b;
+    BN.duelAnswer(s, winner);
+    assert(++guard < 500, 'duel run must terminate');
+  }
+  return { s, seen };
+}
+
 for (let trial = 0; trial < 20; trial++) {
-  const names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-  const T = names.slice().sort(() => Math.random() - 0.5); // true preference, best first
+  for (const n of [2, 3, 4, 6, 8, 12]) {
+    const names = Array.from({ length: n }, (_, i) => 'N' + i);
+    const truth = names.slice().sort(() => Math.random() - 0.5);
+    const { s, seen } = runDuel(names, truth);
+    assert.deepStrictEqual(BN.duelOrder(s, names), truth,
+      'cup reproduces the true order (n=' + n + ')');
+    assert(seen.length <= BN.duelTotal(n), 'never asks more than the full pair count');
+    if (n >= 6) {
+      for (let i = 1; i < seen.length; i++) {
+        const [a0, a1] = seen[i - 1], [b0, b1] = seen[i];
+        assert(b0 !== a0 && b0 !== a1 && b1 !== a0 && b1 !== a1,
+          'no name repeats in consecutive questions (n=' + n + ')');
+      }
+    }
+  }
+}
+
+assert.strictEqual(BN.duelTotal(1), 0, 'a single name needs no duels');
+assert.strictEqual(BN.duelTotal(4), 6, 'four names meet in six duels');
+
+/* forced-balance answers (can cycle) still finish with a full ranking */
+{
+  const names = ['A', 'B', 'C'];
   const s = BN.newDuelSession(names);
   let guard = 0;
   while (!BN.duelComplete(s)) {
     const pair = BN.duelPair(s);
-    const other = pair.a === s.pending ? pair.b : pair.a;
-    const pendingWins = T.indexOf(s.pending) < T.indexOf(other);
-    BN.duelAnswer(s, pendingWins);
-    assert(++guard < 500, 'duel run must terminate');
+    const winner = (s.wins[pair.a] <= s.wins[pair.b]) ? pair.a : pair.b;
+    BN.duelAnswer(s, winner);
+    assert(++guard < 50, 'cyclic run must terminate');
   }
-  assert.deepStrictEqual(s.placed, T, 'duel sort reproduces the true order');
+  const order = BN.duelOrder(s, names);
+  assert.strictEqual(order.slice().sort().join(''), 'ABC', 'order is a permutation');
 }
-
-assert.strictEqual(BN.duelTotal(1), 0, 'a single name needs no duels');
-assert.strictEqual(BN.duelTotal(2), 1, 'two names need one duel');
-assert.strictEqual(BN.duelTotal(3), 3, 'three names need three duels');
 
 /* duel undo restores the previous step */
 const s2 = BN.newDuelSession(['A', 'B', 'C', 'D']);
-const snap = () => JSON.stringify([s2.queue, s2.placed, s2.pending, s2.lo, s2.hi, s2.done]);
+const snap = () => JSON.stringify([s2.queue, s2.asked, s2.wins, s2.reach, s2.done]);
 const before = snap();
-BN.duelAnswer(s2, true);
+const firstPair = BN.duelPair(s2);
+BN.duelAnswer(s2, firstPair.a);
 assert.notStrictEqual(snap(), before, 'a duel changes the session');
 BN.duelUndo(s2);
 assert.strictEqual(snap(), before, 'undo restores the previous session');

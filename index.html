@@ -429,15 +429,17 @@ function shareUrl() {
 }
 
 /* ---------- duel ranking ----------
-   Binary-insertion duels: names arrive in shuffled order and each one is
-   placed into the sorted list with about log2(n) "which do you prefer?"
-   questions. A finished run reproduces the user's preferences exactly.
-   The session survives reloads via localStorage. */
+   "Name cup": every pair of names meets exactly once, drawn in random order
+   inside rounds of disjoint pairings, so the same name never shows up in two
+   consecutive questions (for 6 or more names). The run finishes early as
+   soon as the answered pairs imply a unique total order. Session survives
+   reloads. */
 
 function loadDuel() {
   try {
     var s = JSON.parse(localStorage.getItem(LS_DUEL));
-    if (s && Array.isArray(s.placed) && Array.isArray(s.queue)) return s;
+    if (s && Array.isArray(s.queue) && Array.isArray(s.asked) &&
+        s.queue.every(function (p) { return Array.isArray(p); })) return s;
   } catch (e) {}
   return null;
 }
@@ -449,67 +451,137 @@ function saveDuel() {
   } catch (e) {}
 }
 
-function duelTotal(n) {
-  var t = 0;
-  for (var j = 2; j <= n; j++) t += Math.ceil(Math.log(j) / Math.log(2));
-  return t;
+function duelTotal(n) { return n > 1 ? (n * (n - 1)) / 2 : 0; }
+
+function fy(a) {
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
 }
 
 function newDuelSession(names) {
-  var q = names.slice();
-  for (var i = q.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var t = q[i]; q[i] = q[j]; q[j] = t;
+  var q = fy(names.slice());
+  var m = q.length + (q.length % 2);
+  var arr = q.slice();
+  if (arr.length < m) arr.push(null);              // bye when the count is odd
+  var rot = arr.slice(1);
+  var rounds = [];
+  for (var r = 0; r < m - 1; r++) {
+    var pairs = [];
+    if (arr[0] !== null && rot[0] !== null) pairs.push([arr[0], rot[0]]);
+    for (var i = 1; i <= (m - 2) / 2; i++) {
+      var a1 = rot[i], b1 = rot[m - 1 - i];
+      if (a1 !== null && b1 !== null) pairs.push([a1, b1]);
+    }
+    rounds.push(fy(pairs));
+    rot.unshift(rot.pop());
   }
-  var s = {
-    queue: q.slice(1), placed: q.length ? [q[0]] : [],
-    pending: null, lo: 0, hi: 0,
-    done: 0, total: duelTotal(names.length), history: []
-  };
-  nextPending(s);
+  var queue = [];
+  var last = null;
+  rounds.forEach(function (pairs) {
+    if (last && pairs.length > 1) {
+      for (var i = 0; i < pairs.length; i++) {
+        var p = pairs[i];
+        if (p[0] !== last[0] && p[0] !== last[1] && p[1] !== last[0] && p[1] !== last[1]) {
+          pairs.splice(i, 1);
+          pairs.unshift(p);
+          break;
+        }
+      }
+    }
+    pairs.forEach(function (p) { queue.push(p); });
+    if (pairs.length) last = pairs[pairs.length - 1];
+  });
+  var s = { queue: queue, asked: [], wins: {}, reach: {}, done: 0, total: queue.length, history: [] };
+  names.forEach(function (n) { s.wins[n] = 0; s.reach[n] = {}; });
   return s;
 }
 
-function nextPending(s) {
-  if (!s.queue.length) { s.pending = null; s.lo = 0; s.hi = 0; return; }
-  s.pending = s.queue.shift();
-  s.lo = 0;
-  s.hi = s.placed.length;
+/* Credit a decided pair: wins plus transitive reach. Contradictions keep the
+   win but do not extend reach. */
+function addWin(s, winner, loser) {
+  s.wins[winner]++;
+  s.asked.push([winner, loser, winner]);
+  if (s.reach[loser][winner]) return;
+  var gains = [winner];
+  for (var x in s.reach) if (s.reach[x][winner]) gains.push(x);
+  var targets = [loser];
+  for (var y in s.reach[loser]) targets.push(y);
+  gains.forEach(function (gx) {
+    targets.forEach(function (ty) { if (gx !== ty) s.reach[gx][ty] = true; });
+  });
 }
 
-function duelMid(s) { return Math.floor((s.lo + s.hi) / 2); }
+/* The next question is simply the next pair in the scheduled queue. */
+function currentDuel(s) {
+  return s.queue.length ? s.queue[0] : null;
+}
+
+/* True when the answered pairs imply one strict total order. */
+function totalOrderKnown(s) {
+  var ns = Object.keys(s.reach);
+  for (var i = 0; i < ns.length; i++) {
+    if (s.reach[ns[i]][ns[i]]) return false;
+    for (var j = i + 1; j < ns.length; j++) {
+      var ij = !!s.reach[ns[i]][ns[j]], ji = !!s.reach[ns[j]][ns[i]];
+      if (ij === ji) return false;
+    }
+  }
+  return ns.length > 0;
+}
 
 function duelPair(s) {
-  if (!s.pending) return null;
-  var other = s.placed[duelMid(s)];
-  return Math.random() < 0.5 ? { a: s.pending, b: other } : { a: other, b: s.pending };
+  var cur = currentDuel(s);
+  if (!cur) return null;
+  return Math.random() < 0.5 ? { a: cur[0], b: cur[1] } : { a: cur[1], b: cur[0] };
 }
 
-/* Answer the current duel. pendingWon: the name being placed was preferred. */
-function duelAnswer(s, pendingWon) {
+function duelAnswer(s, winner) {
+  var cur = currentDuel(s);
+  if (!cur) return true;
   s.history.push(JSON.parse(JSON.stringify({
-    queue: s.queue, placed: s.placed, pending: s.pending,
-    lo: s.lo, hi: s.hi, done: s.done, total: s.total
+    queue: s.queue, asked: s.asked, wins: s.wins, reach: s.reach,
+    done: s.done, total: s.total
   })));
   if (s.history.length > 80) s.history.shift();
-  var mid = duelMid(s);
-  if (pendingWon) s.hi = mid; else s.lo = mid + 1;
+  var loser = winner === cur[0] ? cur[1] : cur[0];
+  s.queue.shift();
+  addWin(s, winner, loser);
   s.done++;
-  if (s.lo >= s.hi) {
-    s.placed.splice(s.lo, 0, s.pending);
-    nextPending(s);
-  }
   return duelComplete(s);
 }
 
-function duelComplete(s) { return !s.pending && !s.queue.length; }
+function duelComplete(s) { return !s.queue.length || totalOrderKnown(s); }
 
 function duelUndo(s) {
   if (!s.history.length) return false;
   var h = s.history.pop();
-  s.queue = h.queue; s.placed = h.placed; s.pending = h.pending;
-  s.lo = h.lo; s.hi = h.hi; s.done = h.done; s.total = h.total;
+  s.queue = h.queue; s.asked = h.asked; s.wins = h.wins; s.reach = h.reach;
+  s.done = h.done; s.total = h.total;
   return true;
+}
+
+/* Final ranking: implied dominance when the answers imply a total order,
+   otherwise match wins, then the head-to-head result, then name order. */
+function duelOrder(s, names) {
+  function reachCount(n) {
+    var c = 0;
+    for (var y in s.reach[n]) if (s.reach[n][y]) c++;
+    return c;
+  }
+  function h2h(a, b) {
+    for (var i = 0; i < s.asked.length; i++) {
+      var m = s.asked[i];
+      if ((m[0] === a && m[1] === b) || (m[0] === b && m[1] === a)) return m[2] === a ? -1 : 1;
+    }
+    return 0;
+  }
+  return names.slice().sort(function (a, b) {
+    return (reachCount(b) - reachCount(a)) ||
+      ((s.wins[b] || 0) - (s.wins[a] || 0)) || h2h(a, b) || a.localeCompare(b);
+  });
 }
 
 /* ---------- ui ---------- */
@@ -583,9 +655,10 @@ function renderRank() {
       $('startHint').textContent = 'Add names on the Names tab first.';
     } else {
       $('startDuels').disabled = false;
-      $('startHint').textContent = 'Two names at a time — tap the one you prefer, ' +
-        'until the full ranking is known. Each run ranks all names from scratch ' +
-        'and draws the duels in random order.';
+      $('startHint').textContent = 'Two names at a time — tap the one you prefer. ' +
+        'Every pair of names meets exactly once in random order, and no name ' +
+        'shows up in two questions in a row. The run stops early as soon as the ' +
+        'ranking is known. Each run ranks all names from scratch.';
     }
   }
   if (showArena) renderDuel();
@@ -594,7 +667,7 @@ function renderRank() {
 
 function renderDuel() {
   if (duelComplete(duel)) {
-    saveBallot(duel.placed);
+    saveBallot(duelOrder(duel, state.names.map(function (x) { return x.n; })));
     duel = null;
     saveDuel();
     render();
@@ -607,8 +680,7 @@ function renderDuel() {
   $('duelA').dataset.name = pair.a;
   $('duelB').textContent = pair.b;
   $('duelB').dataset.name = pair.b;
-  $('duelStatus').textContent = 'Placing ' + duel.pending + ' — name ' +
-    (duel.placed.length + 1) + ' of ' + (duel.placed.length + duel.queue.length + 1);
+  $('duelStatus').textContent = 'Each pair of names meets once. Fresh pair every question.';
   $('duelUndo').disabled = !duel.history.length;
 }
 
@@ -821,7 +893,7 @@ document.addEventListener('click', function (e) {
     return;
   }
   if ((t.id === 'duelA' || t.id === 'duelB') && duel) {
-    duelAnswer(duel, t.dataset.name === duel.pending);
+    duelAnswer(duel, t.dataset.name);
     saveDuel();
     render();
     return;
@@ -897,7 +969,7 @@ $('newNames').addEventListener('keydown', function (e) {
 /* exposed for smoke tests */
 window.BN = { merge: merge, tally: tally, votersOf: votersOf, readyCheck: readyCheck, enc: enc, dec: dec,
   newDuelSession: newDuelSession, duelPair: duelPair, duelAnswer: duelAnswer,
-  duelUndo: duelUndo, duelComplete: duelComplete, duelTotal: duelTotal };
+  duelUndo: duelUndo, duelComplete: duelComplete, duelTotal: duelTotal, duelOrder: duelOrder };
 </script>
 </body>
 </html>
