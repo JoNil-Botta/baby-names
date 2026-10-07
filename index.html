@@ -85,6 +85,14 @@
     overflow-wrap: anywhere;
   }
   .duel-card:active { background: var(--accent-soft); border-color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+  .chip {
+    padding: 0.55rem 0.9rem; font-family: inherit; font-size: 0.95rem;
+    border: 1px solid var(--line); border-radius: 999px;
+    background: #fff; color: var(--ink); cursor: pointer;
+  }
+  .chip.mine { background: var(--accent-soft); border-color: var(--accent); text-decoration: line-through; }
+  .chip.dead { opacity: 0.45; text-decoration: line-through; cursor: default; }
   .link {
     background: none; border: none; padding: 0; cursor: pointer;
     color: var(--accent); font-size: 0.85rem; text-decoration: underline;
@@ -164,6 +172,7 @@
 
   <nav class="tabs" id="tabs">
     <button class="tab" data-tab="names">Names <span class="pill" id="namesPill">0</span></button>
+    <button class="tab" data-tab="veto">Veto</button>
     <button class="tab" data-tab="rank">My ranking</button>
     <button class="tab" data-tab="results">Results</button>
   </nav>
@@ -178,6 +187,16 @@
     <div class="card">
       <h2>All suggestions</h2>
       <ul class="list" id="nameList"></ul>
+    </div>
+  </section>
+
+  <section id="tab-veto" hidden>
+    <div class="card">
+      <h2>Veto step</h2>
+      <p class="hint">Before the ranking: tap any name you want to veto. One
+        veto removes it from the ranking for both of you. Tap your own veto
+        again to undo it — nobody else can undo it for you.</p>
+      <div class="chips" id="vetoList"></div>
     </div>
   </section>
 
@@ -231,12 +250,15 @@ var LS_STATE = 'bn.state.v1';
 var LS_ME = 'bn.me.v1';
 var LS_DUEL = 'bn.duels.v1';
 
-function emptyState() { return { v: 1, names: [], ballots: {} }; }
+function emptyState() { return { v: 1, names: [], ballots: {}, vetoes: {} }; }
 
 function loadState() {
   try {
     var s = JSON.parse(localStorage.getItem(LS_STATE));
-    if (s && Array.isArray(s.names) && s.ballots && typeof s.ballots === 'object') return s;
+    if (s && Array.isArray(s.names) && s.ballots && typeof s.ballots === 'object') {
+      if (!s.vetoes || typeof s.vetoes !== 'object') s.vetoes = {};   // caches from before vetoes
+      return s;
+    }
   } catch (e) {}
   return emptyState();
 }
@@ -293,6 +315,23 @@ function merge(a, b) {
       return typeof n === 'string' && known[key(n)];
     });
   }
+  var vs = [(a && a.vetoes) || {}, (b && b.vetoes) || {}];
+  for (var vi = 0; vi < vs.length; vi++) {
+    for (var who in vs[vi]) {
+      var vv = vs[vi][who];
+      if (!vv || !Array.isArray(vv.names)) continue;
+      var vprev = out.vetoes[who];
+      if (!vprev || (vv.at || 0) > (vprev.at || 0)) {
+        out.vetoes[who] = { at: vv.at || 0, names: vv.names.slice() };
+      }
+    }
+  }
+  for (var vw in out.vetoes) {
+    out.vetoes[vw].names = out.vetoes[vw].names.filter(function (n) {
+      return typeof n === 'string' && known[key(n)];
+    });
+    if (!out.vetoes[vw].names.length && !out.vetoes[vw].at) delete out.vetoes[vw];
+  }
   var before = {};
   for (var q = 0; q < a.names.length; q++) before[key(a.names[q].n)] = true;
   var newNames = out.names.filter(function (x) { return !before[key(x.n)]; }).length;
@@ -308,16 +347,38 @@ function votersOf(st) {
     seen[v] = true;
     out.push(v);
   }
-  for (var i = 0; i < st.names.length; i++) add(st.names[i].by);
+  var act = activeNames(st);
+  for (var i = 0; i < act.length; i++) add(act[i].by);
   for (var k in st.ballots) add(k);
+  for (var vv in (st.vetoes || {})) add(vv);
   return out;
+}
+
+/* Union of everyone's vetoes: one veto removes a name. */
+function vetoKeys(st) {
+  var out = {};
+  var vs = (st || state).vetoes || {};
+  for (var who in vs) {
+    var vv = vs[who];
+    if (!vv || !Array.isArray(vv.names)) continue;
+    for (var i = 0; i < vv.names.length; i++) out[key(vv.names[i])] = true;
+  }
+  return out;
+}
+
+/* Names still in play: vetoed names leave the ranking entirely. */
+function activeNames(st) {
+  var s = st || state;
+  var dead = vetoKeys(s);
+  return s.names.filter(function (x) { return !dead[key(x.n)]; });
 }
 
 /* Borda count: a name ranked at 0-based position i in a ballot of N names
    gets N - i points. Also tracks first places and average rank. */
 function tally(st) {
-  var N = st.names.length;
-  var rows = st.names.map(function (x) {
+  var act = activeNames(st);
+  var N = act.length;
+  var rows = act.map(function (x) {
     return { name: x.n, by: x.by, score: 0, sumPos: 0, cnt: 0, firsts: 0, ranks: {} };
   });
   var byKey = {};
@@ -346,7 +407,8 @@ function tally(st) {
 /* Everyone who ever suggested or ranked must hold a ballot covering all names. */
 function readyCheck(st) {
   var missing = [];
-  if (!st.names.length) return { ready: false, missing: [] };
+  var act = activeNames(st);
+  if (!act.length) return { ready: false, missing: [] };
   var voters = votersOf(st);
   for (var i = 0; i < voters.length; i++) {
     var v = voters[i];
@@ -354,7 +416,7 @@ function readyCheck(st) {
     if (!b) { missing.push(v + ' has not ranked yet'); continue; }
     var have = {};
     b.order.forEach(function (n) { have[key(n)] = true; });
-    var stale = st.names.some(function (x) { return !have[key(x.n)]; });
+    var stale = act.some(function (x) { return !have[key(x.n)]; });
     if (stale) missing.push(v + ' must place the new names');
   }
   return { ready: missing.length === 0, missing: missing };
@@ -366,26 +428,27 @@ function needsSubmit() {
   if (!b) return true;
   var have = {};
   b.order.forEach(function (n) { have[key(n)] = true; });
-  return state.names.some(function (x) { return !have[key(x.n)]; });
+  return activeNames(state).some(function (x) { return !have[key(x.n)]; });
 }
 
 /* My saved order, with any names I have not placed yet appended. */
 function myOrder() {
   var b = state.ballots[me];
+  var dead = vetoKeys(state);
   var out = [];
   var have = {};
   if (b) {
     for (var i = 0; i < b.order.length; i++) {
       var id = key(b.order[i]);
       var full = findName(b.order[i]);
-      if (!full || have[id]) continue;
+      if (!full || have[id] || dead[id]) continue;
       have[id] = true;
       out.push(full);
     }
   }
   for (var j = 0; j < state.names.length; j++) {
     var id2 = key(state.names[j].n);
-    if (!have[id2]) {
+    if (!have[id2] && !dead[id2]) {
       have[id2] = true;
       out.push(state.names[j].n);
     }
@@ -612,7 +675,7 @@ function render() {
   var hasMe = !!me;
   $('setup').hidden = hasMe;
   $('tabs').hidden = !hasMe;
-  ['names', 'rank', 'results'].forEach(function (t) {
+  ['names', 'veto', 'rank', 'results'].forEach(function (t) {
     $('tab-' + t).hidden = !hasMe || currentTab !== t;
   });
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (btn) {
@@ -621,6 +684,7 @@ function render() {
   if (!hasMe) return;
 
   renderNames();
+  renderVeto();
   renderRank();
   renderResults();
 }
@@ -638,8 +702,51 @@ function renderNames() {
   }).join('');
 }
 
+function renderVeto() {
+  var vs = state.vetoes || {};
+  var mine = vs[me];
+  var mineSet = {};
+  if (mine && Array.isArray(mine.names)) mine.names.forEach(function (n) { mineSet[key(n)] = true; });
+  var dead = vetoKeys(state);
+  $('vetoList').innerHTML = state.names.length
+    ? state.names.map(function (x) {
+        var id = key(x.n);
+        var cls = mineSet[id] ? 'chip mine' : (dead[id] ? 'chip dead' : 'chip');
+        var tag = mineSet[id] ? ' — vetoed (yours)' : (dead[id] ? ' — vetoed' : '');
+        return '<button class="' + cls + '" data-veto="' + esc(x.n) + '">' + esc(x.n) + esc(tag) + '</button>';
+      }).join('')
+    : '<p class="empty">No names yet. Add names first.</p>';
+}
+
+function toggleVeto(n) {
+  var id = key(n);
+  if (!state.vetoes || typeof state.vetoes !== 'object') state.vetoes = {};
+  var vs = state.vetoes;
+  var dead = vetoKeys(state);
+  var mine = vs[me] || { at: 0, names: [] };
+  var has = mine.names.some(function (x) { return key(x) === id; });
+  if (has) {
+    mine.names = mine.names.filter(function (x) { return key(x) !== id; });
+  } else if (dead[id]) {
+    toast('Already vetoed — only that person can undo it');
+    return;
+  } else {
+    mine.names.push(n);
+  }
+  mine.at = Date.now();
+  if (mine.names.length) vs[me] = mine; else delete vs[me];
+  save();
+  if (duel) { duel = null; saveDuel(); toast('Veto recorded. Start the ranking when ready.'); }
+  render();
+}
+
 function renderRank() {
-  var names = state.names.map(function (x) { return x.n; });
+  if (duelStale()) {
+    duel = null;
+    saveDuel();
+    toast('A veto changed the name list — start the ranking again.');
+  }
+  var names = activeNames(state).map(function (x) { return x.n; });
   var hasBallot = !!state.ballots[me];
   var showArena = !!duel;
   var showStart = !showArena && !hasBallot;
@@ -659,16 +766,26 @@ function renderRank() {
       $('startHint').textContent = 'Two names at a time — tap the one you prefer. ' +
         'Elo ratings run in the background and matchmaking serves the closest ' +
         'duel each time. No name shows up in two questions in a row. The run ' +
-        'stops as soon as the ranking is known. Each run ranks all names from scratch.';
+        'stops as soon as the ranking is known, and each run ranks all surviving ' +
+        'names from scratch. Veto names on the Veto tab first.';
     }
   }
   if (showArena) renderDuel();
   if (showManual) renderRankList();
 }
 
+/* A running duel session dies when a veto touches any name in it. */
+function duelStale() {
+  if (!duel) return false;
+  var ok = {};
+  activeNames(state).forEach(function (x) { ok[key(x.n)] = true; });
+  for (var n in duel.wins) if (!ok[key(n)]) return true;
+  return false;
+}
+
 function renderDuel() {
   if (duelComplete(duel)) {
-    saveBallot(duelOrder(duel, state.names.map(function (x) { return x.n; })));
+    saveBallot(duelOrder(duel, activeNames(state).map(function (x) { return x.n; })));
     duel = null;
     saveDuel();
     render();
@@ -714,11 +831,24 @@ function renderRankList() {
   bindDrag();
 }
 
+function vetoCard() {
+  var dead = vetoKeys(state);
+  var vetoed = state.names.map(function (x) { return x.n; })
+    .filter(function (n) { return dead[key(n)]; });
+  if (!vetoed.length) return '';
+  return '<div class="card"><h2>Vetoed</h2><p class="hint">' + esc(vetoed.join(', ')) + '</p></div>';
+}
+
 function renderResults() {
   var body = $('resultBody');
-  var names = state.names.map(function (x) { return x.n; });
-  if (!names.length) {
+  var all = state.names.map(function (x) { return x.n; });
+  var names = activeNames(state).map(function (x) { return x.n; });
+  if (!all.length) {
     body.innerHTML = '<div class="card"><p class="empty">No names yet.</p></div>';
+    return;
+  }
+  if (!names.length) {
+    body.innerHTML = '<div class="card"><p class="empty">Every name is vetoed — nothing to rank.</p></div>';
     return;
   }
   var check = readyCheck(state);
@@ -729,7 +859,7 @@ function renderResults() {
         ? '<ul class="list">' + check.missing.map(function (m) {
             return '<li><div class="row-main"><div class="row-name">' + esc(m) + '</div></div></li>';
           }).join('') + '</ul>'
-        : '') + '</div>';
+        : '') + '</div>' + vetoCard();
     return;
   }
   var rows = tally(state);
@@ -752,7 +882,7 @@ function renderResults() {
         '<div class="score"><b>' + r.score + '</b> pts<br>avg ' + (r.avg === null ? '—' : r.avg.toFixed(1)) + '</div></li>';
     }).join('') + '</ul>' +
     '<p class="hint">Points: a first place gives ' + names.length + ' points, last place 1 point. ' +
-    'This is a Borda count over both rankings.</p></div>';
+    'This is a Borda count over both rankings.</p></div>' + vetoCard();
 }
 
 /* ---------- actions ---------- */
@@ -883,8 +1013,9 @@ document.addEventListener('click', function (e) {
     return;
   }
   if (t.id === 'startDuels' || t.id === 'rerankBtn') {
-    if (!state.names.length) return;
-    duel = newDuelSession(state.names.map(function (x) { return x.n; }));
+    var act = activeNames(state);
+    if (!act.length) return;
+    duel = newDuelSession(act.map(function (x) { return x.n; }));
     saveDuel();
     render();
     return;
@@ -931,6 +1062,10 @@ document.addEventListener('click', function (e) {
     render();
     return;
   }
+  if (t.dataset && t.dataset.veto) {
+    toggleVeto(t.dataset.veto);
+    return;
+  }
   if (t.dataset && t.dataset.rm) {
     if (window.confirm('Remove “' + t.dataset.rm + '”?')) removeName(t.dataset.rm);
     return;
@@ -969,6 +1104,7 @@ $('newNames').addEventListener('keydown', function (e) {
 
 /* exposed for smoke tests */
 window.BN = { merge: merge, tally: tally, votersOf: votersOf, readyCheck: readyCheck, enc: enc, dec: dec,
+  vetoKeys: vetoKeys, activeNames: activeNames,
   newDuelSession: newDuelSession, duelPair: duelPair, duelAnswer: duelAnswer,
   duelUndo: duelUndo, duelComplete: duelComplete, duelTotal: duelTotal, duelOrder: duelOrder };
 </script>

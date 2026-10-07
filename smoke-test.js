@@ -186,4 +186,36 @@ assert.notStrictEqual(snap(), before, 'a duel changes the session');
 BN.duelUndo(s2);
 assert.strictEqual(snap(), before, 'undo restores the previous session');
 
+/* vetoes: one veto removes a name; old caches without vetoes keep working */
+{
+  const st = {
+    v: 1,
+    names: [{ n: 'A', by: 'J', at: 0 }, { n: 'B', by: 'I', at: 0 }, { n: 'C', by: 'J', at: 0 }],
+    ballots: {
+      J: { at: 1, order: ['A', 'B', 'C'] },
+      I: { at: 1, order: ['A', 'C', 'B'] },
+    },
+    vetoes: { I: { at: 5, names: ['B'] } },
+  };
+  const rows = BN.tally(st);
+  assert.strictEqual(rows.length, 2, 'vetoed name leaves the ranking');
+  assert(!rows.some((r) => r.name === 'B'), 'B is out');
+  const chk = BN.readyCheck(st);
+  assert.strictEqual(chk.ready, true, 'ballots judged on surviving names only');
+  assert.deepStrictEqual(BN.vetoKeys(st), { b: true }, 'union of vetoes');
+  assert.strictEqual(BN.activeNames(st).length, 2, 'active names exclude vetoes');
+}
+/* merging vetoes + backward compatibility with veto-less states and links */
+{
+  const old1 = { v: 1, names: [{ n: 'A', by: 'J', at: 0 }], ballots: {} };
+  const old2 = { v: 1, names: [{ n: 'B', by: 'I', at: 0 }], ballots: {} };
+  const mg = BN.merge(old1, old2);
+  assert.strictEqual(Object.keys(mg.state.vetoes).length, 0,
+    'old caches and links merge without vetoes');
+  const withV = { v: 1, names: [{ n: 'A', by: 'J', at: 0 }, { n: 'B', by: 'I', at: 0 }],
+                  ballots: {}, vetoes: { J: { at: 9, names: ['A'] } } };
+  const mg2 = BN.merge(mg.state, withV);
+  assert.deepStrictEqual(mg2.state.vetoes.J.names, ['A'], 'vetoes travel in merges');
+}
+
 console.log('smoke-test: all tests passed');
