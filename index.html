@@ -448,7 +448,6 @@ function renderNames() {
   }
   ul.innerHTML = state.names.map(function (x) {
     return '<li><div class="row-main"><div class="row-name">' + esc(x.n) + '</div>' +
-      (x.by ? '<div class="row-meta">added by ' + esc(x.by) + '</div>' : '') +
       '</div><button class="rm" data-rm="' + esc(x.n) + '" title="Remove" aria-label="Remove ' +
       esc(x.n) + '">&times;</button></li>';
   }).join('');
@@ -472,24 +471,15 @@ function renderRank() {
     : 'Top of the list is your favourite. Your ranking is saved on this device.';
   $('lockBtn').hidden = !needsSubmit();
   ul.innerHTML = order.map(function (n, i) {
-    var meta = 'added by ' + esc(findMeta(n));
     return '<li draggable="true" data-i="' + i + '">' +
       '<span class="pos">' + (i + 1) + '</span>' +
-      '<div class="row-main"><div class="row-name">' + esc(n) + '</div>' +
-      (findMeta(n) ? '<div class="row-meta">' + meta + '</div>' : '') + '</div>' +
+      '<div class="row-main"><div class="row-name">' + esc(n) + '</div></div>' +
       '<button class="mv" data-mv="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') +
       ' aria-label="Move ' + esc(n) + ' up">&#8593;</button>' +
       '<button class="mv" data-mv="down" data-i="' + i + '"' + (i === order.length - 1 ? ' disabled' : '') +
       ' aria-label="Move ' + esc(n) + ' down">&#8595;</button></li>';
   }).join('');
   bindDrag();
-}
-
-function findMeta(n) {
-  for (var i = 0; i < state.names.length; i++) {
-    if (key(state.names[i].n) === key(n)) return state.names[i].by || '';
-  }
-  return '';
 }
 
 function renderResults() {
@@ -523,8 +513,7 @@ function renderResults() {
     '<div class="card"><h2>The full picture</h2><ul class="list">' +
     rows.map(function (r) {
       var place = rows.filter(function (x) { return x.score > r.score; }).length + 1;
-      return '<li><div class="row-main"><div class="row-name">' + place + '. ' + esc(r.name) +
-        (r.by ? ' <span class="row-meta">(' + esc(r.by) + ')</span>' : '') + '</div>' +
+      return '<li><div class="row-main"><div class="row-name">' + place + '. ' + esc(r.name) + '</div>' +
         '<div class="ranks">' + voters.map(function (v) {
           return esc(v) + (r.ranks[v] ? ' #' + r.ranks[v] : ' —');
         }).join(' · ') + '</div></div>' +
