@@ -113,4 +113,33 @@ const staleCheck = BN.readyCheck(stale);
 assert.strictEqual(staleCheck.ready, false, 'not ready with a new unplaced name');
 assert(/new names/.test(staleCheck.missing.join(' ')), 'stale ballots reported');
 
+/* duel engine: 20 random runs against hidden true orders must reproduce them */
+for (let trial = 0; trial < 20; trial++) {
+  const names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+  const T = names.slice().sort(() => Math.random() - 0.5); // true preference, best first
+  const s = BN.newDuelSession(names);
+  let guard = 0;
+  while (!BN.duelComplete(s)) {
+    const pair = BN.duelPair(s);
+    const other = pair.a === s.pending ? pair.b : pair.a;
+    const pendingWins = T.indexOf(s.pending) < T.indexOf(other);
+    BN.duelAnswer(s, pendingWins);
+    assert(++guard < 500, 'duel run must terminate');
+  }
+  assert.deepStrictEqual(s.placed, T, 'duel sort reproduces the true order');
+}
+
+assert.strictEqual(BN.duelTotal(1), 0, 'a single name needs no duels');
+assert.strictEqual(BN.duelTotal(2), 1, 'two names need one duel');
+assert.strictEqual(BN.duelTotal(3), 3, 'three names need three duels');
+
+/* duel undo restores the previous step */
+const s2 = BN.newDuelSession(['A', 'B', 'C', 'D']);
+const snap = () => JSON.stringify([s2.queue, s2.placed, s2.pending, s2.lo, s2.hi, s2.done]);
+const before = snap();
+BN.duelAnswer(s2, true);
+assert.notStrictEqual(snap(), before, 'a duel changes the session');
+BN.duelUndo(s2);
+assert.strictEqual(snap(), before, 'undo restores the previous session');
+
 console.log('smoke-test: all tests passed');

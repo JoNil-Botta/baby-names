@@ -75,6 +75,16 @@
     background: #fff; color: var(--ink); border: 1px solid var(--line); font-weight: 500;
   }
   .btn.block { width: 100%; margin-top: 0.6rem; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .duel-cards { display: flex; gap: 0.6rem; margin: 0.8rem 0 0.4rem; }
+  .duel-card {
+    flex: 1; min-height: 5.5rem; padding: 1rem 0.5rem;
+    font-size: 1.25rem; font-weight: 600;
+    border: 1px solid var(--line); border-radius: 1rem;
+    background: #fff; color: var(--ink); cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  .duel-card:active { background: var(--accent-soft); border-color: var(--accent); }
   .link {
     background: none; border: none; padding: 0; cursor: pointer;
     color: var(--accent); font-size: 0.85rem; text-decoration: underline;
@@ -172,11 +182,27 @@
   </section>
 
   <section id="tab-rank" hidden>
-    <div class="card">
-      <h2>Put the names in order</h2>
+    <div class="card" id="duelStart">
+      <h2>Rank the names with quick duels</h2>
+      <p class="hint" id="startHint"></p>
+      <button id="startDuels" class="btn block">Start ranking</button>
+    </div>
+    <div class="card" id="duelArena" hidden>
+      <h2 id="duelTitle"></h2>
+      <p class="hint">Which name do you prefer?</p>
+      <div class="duel-cards">
+        <button class="duel-card" id="duelA"></button>
+        <button class="duel-card" id="duelB"></button>
+      </div>
+      <p class="hint center" id="duelStatus"></p>
+      <button id="duelUndo" class="btn secondary block">Undo last duel</button>
+    </div>
+    <div class="card" id="rankManual" hidden>
+      <h2>Your ranking</h2>
       <p class="hint" id="rankHint"></p>
       <ul class="list" id="rankList"></ul>
       <button id="lockBtn" class="btn block">Use this order as my ranking</button>
+      <button id="rerankBtn" class="btn secondary block">Re-rank all names with duels</button>
     </div>
   </section>
 
@@ -203,6 +229,7 @@
 
 var LS_STATE = 'bn.state.v1';
 var LS_ME = 'bn.me.v1';
+var LS_DUEL = 'bn.duels.v1';
 
 function emptyState() { return { v: 1, names: [], ballots: {} }; }
 
@@ -220,6 +247,7 @@ function loadMe() {
 
 var state = loadState();
 var me = loadMe();
+var duel = loadDuel();
 
 function save() {
   try { localStorage.setItem(LS_STATE, JSON.stringify(state)); } catch (e) {}
@@ -400,6 +428,90 @@ function shareUrl() {
   return location.href.split('#')[0] + '#s=' + enc(state);
 }
 
+/* ---------- duel ranking ----------
+   Binary-insertion duels: names arrive in shuffled order and each one is
+   placed into the sorted list with about log2(n) "which do you prefer?"
+   questions. A finished run reproduces the user's preferences exactly.
+   The session survives reloads via localStorage. */
+
+function loadDuel() {
+  try {
+    var s = JSON.parse(localStorage.getItem(LS_DUEL));
+    if (s && Array.isArray(s.placed) && Array.isArray(s.queue)) return s;
+  } catch (e) {}
+  return null;
+}
+
+function saveDuel() {
+  try {
+    if (duel) localStorage.setItem(LS_DUEL, JSON.stringify(duel));
+    else localStorage.removeItem(LS_DUEL);
+  } catch (e) {}
+}
+
+function duelTotal(n) {
+  var t = 0;
+  for (var j = 2; j <= n; j++) t += Math.ceil(Math.log(j) / Math.log(2));
+  return t;
+}
+
+function newDuelSession(names) {
+  var q = names.slice();
+  for (var i = q.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = q[i]; q[i] = q[j]; q[j] = t;
+  }
+  var s = {
+    queue: q.slice(1), placed: q.length ? [q[0]] : [],
+    pending: null, lo: 0, hi: 0,
+    done: 0, total: duelTotal(names.length), history: []
+  };
+  nextPending(s);
+  return s;
+}
+
+function nextPending(s) {
+  if (!s.queue.length) { s.pending = null; s.lo = 0; s.hi = 0; return; }
+  s.pending = s.queue.shift();
+  s.lo = 0;
+  s.hi = s.placed.length;
+}
+
+function duelMid(s) { return Math.floor((s.lo + s.hi) / 2); }
+
+function duelPair(s) {
+  if (!s.pending) return null;
+  var other = s.placed[duelMid(s)];
+  return Math.random() < 0.5 ? { a: s.pending, b: other } : { a: other, b: s.pending };
+}
+
+/* Answer the current duel. pendingWon: the name being placed was preferred. */
+function duelAnswer(s, pendingWon) {
+  s.history.push(JSON.parse(JSON.stringify({
+    queue: s.queue, placed: s.placed, pending: s.pending,
+    lo: s.lo, hi: s.hi, done: s.done, total: s.total
+  })));
+  if (s.history.length > 80) s.history.shift();
+  var mid = duelMid(s);
+  if (pendingWon) s.hi = mid; else s.lo = mid + 1;
+  s.done++;
+  if (s.lo >= s.hi) {
+    s.placed.splice(s.lo, 0, s.pending);
+    nextPending(s);
+  }
+  return duelComplete(s);
+}
+
+function duelComplete(s) { return !s.pending && !s.queue.length; }
+
+function duelUndo(s) {
+  if (!s.history.length) return false;
+  var h = s.history.pop();
+  s.queue = h.queue; s.placed = h.placed; s.pending = h.pending;
+  s.lo = h.lo; s.hi = h.hi; s.done = h.done; s.total = h.total;
+  return true;
+}
+
 /* ---------- ui ---------- */
 
 var $ = function (id) { return document.getElementById(id); };
@@ -454,6 +566,53 @@ function renderNames() {
 }
 
 function renderRank() {
+  var names = state.names.map(function (x) { return x.n; });
+  var hasBallot = !!state.ballots[me];
+  var showArena = !!duel;
+  var showStart = !showArena && !hasBallot;
+  var showManual = !showArena && hasBallot;
+
+  $('duelStart').hidden = !showStart;
+  $('duelArena').hidden = !showArena;
+  $('rankManual').hidden = !showManual;
+
+  if (showStart) {
+    $('startDuels').textContent = 'Start ranking (' + names.length + ' names)';
+    if (!names.length) {
+      $('startDuels').disabled = true;
+      $('startHint').textContent = 'Add names on the Names tab first.';
+    } else {
+      $('startDuels').disabled = false;
+      $('startHint').textContent = 'Two names at a time — tap the one you prefer, ' +
+        'until the full ranking is known. Each run ranks all names from scratch ' +
+        'and draws the duels in random order.';
+    }
+  }
+  if (showArena) renderDuel();
+  if (showManual) renderRankList();
+}
+
+function renderDuel() {
+  if (duelComplete(duel)) {
+    saveBallot(duel.placed);
+    duel = null;
+    saveDuel();
+    render();
+    toast('Ranking saved. Copy the share link to send it on.');
+    return;
+  }
+  var pair = duelPair(duel);
+  $('duelTitle').textContent = 'Duel ' + (duel.done + 1) + ' of ~' + duel.total;
+  $('duelA').textContent = pair.a;
+  $('duelA').dataset.name = pair.a;
+  $('duelB').textContent = pair.b;
+  $('duelB').dataset.name = pair.b;
+  $('duelStatus').textContent = 'Placing ' + duel.pending + ' — name ' +
+    (duel.placed.length + 1) + ' of ' + (duel.placed.length + duel.queue.length + 1);
+  $('duelUndo').disabled = !duel.history.length;
+}
+
+function renderRankList() {
   var order = myOrder();
   var ul = $('rankList');
   if (!order.length) {
@@ -650,6 +809,23 @@ document.addEventListener('click', function (e) {
     toast('Ranking saved. Copy the share link to send it on.');
     return;
   }
+  if (t.id === 'startDuels' || t.id === 'rerankBtn') {
+    if (!state.names.length) return;
+    duel = newDuelSession(state.names.map(function (x) { return x.n; }));
+    saveDuel();
+    render();
+    return;
+  }
+  if (t.id === 'duelUndo') {
+    if (duel && duelUndo(duel)) { saveDuel(); render(); }
+    return;
+  }
+  if ((t.id === 'duelA' || t.id === 'duelB') && duel) {
+    duelAnswer(duel, t.dataset.name === duel.pending);
+    saveDuel();
+    render();
+    return;
+  }
   if (t.id === 'shareBtn') { copyLink(); return; }
   if (t.id === 'shareSheet') {
     navigator.share({ title: 'Baby name ranker', url: shareUrl() }).catch(function () {});
@@ -719,7 +895,9 @@ $('newNames').addEventListener('keydown', function (e) {
 })();
 
 /* exposed for smoke tests */
-window.BN = { merge: merge, tally: tally, votersOf: votersOf, readyCheck: readyCheck, enc: enc, dec: dec };
+window.BN = { merge: merge, tally: tally, votersOf: votersOf, readyCheck: readyCheck, enc: enc, dec: dec,
+  newDuelSession: newDuelSession, duelPair: duelPair, duelAnswer: duelAnswer,
+  duelUndo: duelUndo, duelComplete: duelComplete, duelTotal: duelTotal };
 </script>
 </body>
 </html>
